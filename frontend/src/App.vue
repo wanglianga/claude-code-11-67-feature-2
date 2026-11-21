@@ -4,7 +4,7 @@
     <el-aside width="230px">
       <div class="brand">
         <div class="brand-title">科研数据工作台</div>
-        <div class="brand-sub">产品目录 · 资格开通 · 额度 · 审计</div>
+        <div class="brand-sub">产品目录 · 资格开通 · 额度 · 成本估计 · 审计</div>
       </div>
       <el-menu :default-active="$route.path" router background-color="#0f2740" text-color="#b8c7d9"
         active-text-color="#ffffff">
@@ -43,6 +43,7 @@ const allMenus = [
   { path: '/workbench', title: '资格开通工作台', roles: ['ADMIN', 'PI', 'ANALYST', 'AUDITOR'] },
   { path: '/access', title: '数据访问模拟', roles: ['PI', 'ANALYST'] },
   { path: '/quota', title: '额度账本', roles: ['ADMIN', 'PI', 'ANALYST', 'AUDITOR'] },
+  { path: '/estimator', title: '资源成本估计', roles: ['ADMIN', 'PI', 'ANALYST', 'AUDITOR'] },
   { path: '/audit', title: '审计查询', roles: ['ADMIN', 'AUDITOR'] },
 ]
 const menus = allMenus.filter((m) => !user || m.roles.includes(user.role))

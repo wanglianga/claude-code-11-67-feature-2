@@ -26,6 +26,8 @@ def _ensure_test_db():
 
 
 _ensure_test_db()
+# 测试库仅用于隔离测试：先删后建，确保模式与当前 ORM 定义一致
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 
 

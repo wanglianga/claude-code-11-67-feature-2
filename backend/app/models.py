@@ -276,6 +276,169 @@ class UsageReport(Base):
     event: Mapped[UsageEvent] = relationship(back_populates="reports")
 
 
+class AnalysisPlan(Base):
+    """研究分析计划：登记拟用产品（含登记时的目录版本）、时间范围、筛选条件、
+    联结方式与输出粒度。估计过期判定以本表登记的产品版本与条件快照为准。"""
+
+    __tablename__ = "analysis_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_no: Mapped[str] = mapped_column(sa.String(40), unique=True, index=True)
+    title: Mapped[str] = mapped_column(sa.String(128))
+    project_id: Mapped[int | None] = mapped_column(sa.ForeignKey("projects.id"), nullable=True, index=True)
+    purpose_code: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
+    # 拟用产品：[{product_id, code, name, catalog_version}]，catalog_version = 登记时的目录版本
+    products: Mapped[list] = mapped_column(JSONB, default=list)
+    time_from: Mapped[date] = mapped_column(sa.Date)
+    time_to: Mapped[date] = mapped_column(sa.Date)
+    # 筛选条件：[{field, op(eq/in/range/missing/not_missing), value}]
+    filters: Mapped[list] = mapped_column(JSONB, default=list)
+    # 联结：[{left_product_id, right_product_id, join_type}]
+    joins: Mapped[list] = mapped_column(JSONB, default=list)
+    output_granularity: Mapped[str] = mapped_column(sa.String(32), default="明细行")
+    cache_expectation: Mapped[str] = mapped_column(sa.String(16), default="冷")  # 冷/热/混合
+    load_hint: Mapped[float] = mapped_column(sa.Float, default=1.0)  # 预期并发作业数
+    expected_export_rows: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    plan_signature: Mapped[str] = mapped_column(sa.String(512), index=True)
+    status: Mapped[str] = mapped_column(sa.String(16), default="已登记")  # 已登记/已归档/待重登
+    created_by: Mapped[str] = mapped_column(sa.String(64))
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+
+
+class PartitionProfile(Base):
+    """数据规模画像：按（产品 × 分区）记录记录量、缺失率、索引统计与缓存状态。"""
+
+    __tablename__ = "partition_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(sa.ForeignKey("data_products.id"), index=True)
+    partition: Mapped[str] = mapped_column(sa.String(32))  # 2024 / 2025-H1 / 历史归档
+    time_from: Mapped[date] = mapped_column(sa.Date)
+    time_to: Mapped[date] = mapped_column(sa.Date)
+    record_count: Mapped[int] = mapped_column(sa.Integer, default=0)
+    missing_rate: Mapped[float] = mapped_column(sa.Float, default=0.0)
+    # {"indexed_fields": [...], "index_hit_rate": 0.86, "index_count": n,
+    #  "distinct_values": {"field": n}}
+    index_stats: Mapped[dict] = mapped_column(JSONB, default=dict)
+    cache_state: Mapped[str] = mapped_column(sa.String(16), default="冷")  # 冷/热
+    profile_load: Mapped[float] = mapped_column(sa.Float, default=1.0)  # 画像采样时并发
+    sampled_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+    note: Mapped[str] = mapped_column(sa.String(256), default="")
+
+
+class OperatorBaseline(Base):
+    """组合成本模型的数据产品算子基准（scan/join/aggregate/output）。
+
+    每个产品 × 算子一行；params 保存每行毫秒成本、索引/冷缓存/缺失惩罚等。
+    """
+
+    __tablename__ = "operator_baselines"
+    __table_args__ = (sa.UniqueConstraint("product_id", "op"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(sa.ForeignKey("data_products.id"), index=True)
+    op: Mapped[str] = mapped_column(sa.String(16))  # scan/join/aggregate/output
+    baseline_version: Mapped[int] = mapped_column(sa.Integer, default=1)
+    params: Mapped[dict] = mapped_column(JSONB, default=dict)
+    calibration_min_load: Mapped[float] = mapped_column(sa.Float, default=1.0)
+    calibration_max_load: Mapped[float] = mapped_column(sa.Float, default=4.0)
+    sample_count: Mapped[int] = mapped_column(sa.Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+
+
+class JobLedger(Base):
+    """历史作业账本：同类计划的实际 CPU、扫描/导出行数、环境负载与中止状态。
+
+    中止作业（权限撤回/用户取消/资源不足）是右删失样本：观测到的耗用只是
+    完整执行成本的下界，`censored=true`、`training_eligible=false`，不参与训练。
+    """
+
+    __tablename__ = "job_ledger"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_no: Mapped[str] = mapped_column(sa.String(40), unique=True, index=True)
+    project_id: Mapped[int | None] = mapped_column(sa.ForeignKey("projects.id"), nullable=True)
+    plan_id: Mapped[int | None] = mapped_column(sa.ForeignKey("analysis_plans.id"), nullable=True)
+    products: Mapped[list] = mapped_column(JSONB, default=list)
+    time_from: Mapped[date] = mapped_column(sa.Date)
+    time_to: Mapped[date] = mapped_column(sa.Date)
+    filters: Mapped[list] = mapped_column(JSONB, default=list)
+    joins: Mapped[list] = mapped_column(JSONB, default=list)
+    join_types: Mapped[list] = mapped_column(JSONB, default=list)
+    output_granularity: Mapped[str] = mapped_column(sa.String(32), default="明细行")
+    plan_signature: Mapped[str] = mapped_column(sa.String(512), index=True)
+    raw_rows: Mapped[int] = mapped_column(sa.Integer, default=0)       # 时间范围内分区记录量合计
+    input_rows: Mapped[int] = mapped_column(sa.Integer, default=0)     # 筛选前参与扫描的行
+    selectivity: Mapped[float] = mapped_column(sa.Float, default=1.0)
+    rows_by_product: Mapped[dict] = mapped_column(JSONB, default=dict)
+    missing_by_product: Mapped[dict] = mapped_column(JSONB, default=dict)
+    index_hit_by_product: Mapped[dict] = mapped_column(JSONB, default=dict)
+    scan_rows: Mapped[int] = mapped_column(sa.Integer, default=0)
+    output_rows: Mapped[int] = mapped_column(sa.Integer, default=0)
+    cpu_seconds: Mapped[float] = mapped_column(sa.Float, default=0.0)
+    wall_seconds: Mapped[float] = mapped_column(sa.Float, default=0.0)
+    cache_state: Mapped[str] = mapped_column(sa.String(16), default="冷")
+    env_load: Mapped[float] = mapped_column(sa.Float, default=1.0)  # 执行时并发作业数
+    status: Mapped[str] = mapped_column(sa.String(16), default="成功")  # 成功/中止
+    end_reason: Mapped[str] = mapped_column(sa.String(32), default="完成")
+    censored: Mapped[bool] = mapped_column(sa.Boolean, default=False)
+    training_eligible: Mapped[bool] = mapped_column(sa.Boolean, default=True)
+    started_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+    note: Mapped[str] = mapped_column(sa.String(256), default="")
+
+
+class EstimatorModel(Base):
+    """估计模型版本：分位数经验模型（empirical）或组合算子模型（operator）。
+
+    训练样本 id、校准范围、覆盖率与参数均入库，估计结果可按 model_id 回查。
+    """
+
+    __tablename__ = "estimator_models"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version_label: Mapped[str] = mapped_column(sa.String(32), unique=True, index=True)
+    route: Mapped[str] = mapped_column(sa.String(16))  # empirical/operator
+    status: Mapped[str] = mapped_column(sa.String(16), default="active")  # active/retired
+    trained_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+    training_job_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    training_sample_count: Mapped[int] = mapped_column(sa.Integer, default=0)
+    excluded_censored_count: Mapped[int] = mapped_column(sa.Integer, default=0)
+    calibration: Mapped[dict] = mapped_column(JSONB, default=dict)
+    params: Mapped[dict] = mapped_column(JSONB, default=dict)
+    metrics: Mapped[dict] = mapped_column(JSONB, default=dict)
+    note: Mapped[str] = mapped_column(sa.String(256), default="")
+
+
+class CostEstimate(Base):
+    """作业提交前的资源成本估计：区间而非伪精确值，保存模型版本与训练样本回查。"""
+
+    __tablename__ = "cost_estimates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    estimate_no: Mapped[str] = mapped_column(sa.String(40), unique=True, index=True)
+    plan_id: Mapped[int] = mapped_column(sa.ForeignKey("analysis_plans.id"), index=True)
+    route: Mapped[str] = mapped_column(sa.String(16))  # empirical/operator
+    model_id: Mapped[int | None] = mapped_column(sa.ForeignKey("estimator_models.id"), nullable=True)
+    status: Mapped[str] = mapped_column(sa.String(24))  # ok/widened/refused/insufficient_samples
+    intervals: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    interval_center: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    uncertainty_factors: Mapped[list] = mapped_column(JSONB, default=list)
+    applicable_sample_range: Mapped[dict] = mapped_column(JSONB, default=dict)
+    applied_samples: Mapped[list] = mapped_column(JSONB, default=list)
+    baselines_used: Mapped[list] = mapped_column(JSONB, default=list)
+    route_recommendation: Mapped[dict] = mapped_column(JSONB, default=dict)
+    load_assessment: Mapped[dict] = mapped_column(JSONB, default=dict)
+    warnings: Mapped[list] = mapped_column(JSONB, default=list)
+    plan_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
+    snapshot_signature: Mapped[str] = mapped_column(sa.String(512), default="")
+    is_stale: Mapped[bool] = mapped_column(sa.Boolean, default=False)
+    stale_reason: Mapped[str | None] = mapped_column(sa.String(256), nullable=True)
+    created_by: Mapped[str] = mapped_column(sa.String(64), default="system")
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+
+
 class AccessEvent(Base):
     """数据访问事件：携带当时的产品定义、资格依据与额度变化快照，供审计还原。"""
 

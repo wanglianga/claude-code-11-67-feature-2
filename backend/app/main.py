@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import Base, engine
-from .routers import access, audit, auth, catalog, projects, qualifications, quota
+from .routers import (
+    access, audit, auth, catalog, estimator, projects, qualifications, quota,
+)
 
 
 @asynccontextmanager
@@ -28,11 +30,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="科研数据产品目录与项目资格开通工作台",
+    title="科研数据产品目录、资格开通与查询资源成本估计工作台",
     description=(
-        "面向医学研究中心的数据产品目录、课题资格编译开通、额度账本与审计回查系统。\n\n"
+        "面向医学研究中心的数据产品目录、课题资格编译开通、额度账本、研究查询资源成本估计与审计回查系统。\n\n"
         "核心能力：字段级求交（产品字段 × 用途条件 × 成员范围 × 伦理约束）、"
-        "按（项目×产品×用途）隔离的资格实例、并发额度占用与幂等扣减、访问依据快照回查。"
+        "按（项目×产品×用途）隔离的资格实例、并发额度占用与幂等扣减、"
+        "提交前资源成本估计（分位数经验模型 / 组合算子模型，输出区间、过期判定与样本回查）、"
+        "访问依据快照回查。"
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -52,6 +56,7 @@ app.include_router(qualifications.router)
 app.include_router(access.router)
 app.include_router(quota.router)
 app.include_router(audit.router)
+app.include_router(estimator.router)
 
 
 @app.get("/api/health", tags=["系统"])

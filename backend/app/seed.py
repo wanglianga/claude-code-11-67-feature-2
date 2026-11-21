@@ -286,3 +286,7 @@ def seed(db: Session) -> None:
     reservation.access_event_id = event.id
     usage.access_event_id = event.id
     db.commit()
+
+    # 研究查询资源成本估计演示数据（画像、算子基准、历史作业账本、双路线模型与计划）
+    from .seed_estimator import seed_estimator
+    seed_estimator(db)
